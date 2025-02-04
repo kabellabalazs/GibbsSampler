@@ -3,7 +3,7 @@ import numpy as np
 from utils import binary_sum
 from options import options
 from utils import progress_bar
-
+import numba
 def s_transform(kraus_mps,weight_func,delta_t,num_steps,ham_tp,ham_tm,split_opts=options['split_opts'],tebd_opts=options['tebd_opts'],comp_opts=options['comp_opts']):
     '''
     Implements the S-transform of a given MPS.
