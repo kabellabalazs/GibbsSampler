@@ -3,8 +3,8 @@ import numpy as np
 from utils import binary_sum
 from options import options
 from utils import progress_bar
-import numba
-def s_transform(kraus_mps,weight_func,delta_t,num_steps,ham_tp,ham_tm,split_opts=options['split_opts'],tebd_opts=options['tebd_opts'],comp_opts=options['comp_opts']):
+import torch
+def s_transform(kraus_mps,weight_func,delta_t,num_steps,ham_tp,ham_tm,use_torch=False,split_opts=options['split_opts'],tebd_opts=options['tebd_opts'],comp_opts=options['comp_opts']):
     '''
     Implements the S-transform of a given MPS.
     S[.]=Integrate_{-inf}^{inf} dt weight_func(t) U(t)[.]U(-t)
@@ -32,6 +32,13 @@ def s_transform(kraus_mps,weight_func,delta_t,num_steps,ham_tp,ham_tm,split_opts
     qtn.qtn.tensor_1d.MatrixProductState
         The transformed MPS.
     '''
+    if use_torch:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Ensure kraus_mps, ham_tp, and ham_tm are using PyTorch tensors on the GPU
+        kraus_mps.apply_to_arrays(lambda x: torch.tensor(x,dtype=torch.complex128, device=device))
+        ham_tp.apply_to_arrays(lambda x: torch.tensor(x,dtype=torch.complex128, device=device))
+        ham_tm.apply_to_arrays(lambda x: torch.tensor(x,dtype=torch.complex128, device=device))
      #create the TEBD object for the forward and backward time evolution
     tebd_plus=qtn.TEBD(kraus_mps,ham_tp,split_opts=split_opts)
     tebd_minus=qtn.TEBD(kraus_mps,ham_tm,split_opts=split_opts)
