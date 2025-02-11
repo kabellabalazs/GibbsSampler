@@ -17,14 +17,24 @@ def mpo_to_mps(mpo):
     mps_arrays=[arr.reshape(arr.shape[:-2]+(np.prod(arr.shape[-2:]),)) for arr in arrays]
     return qtn.tensor_1d.MatrixProductState(mps_arrays)
 
+
 def mirror_mpo(mpo):
+    """
+    Mirror a Matrix Product Operator (MPO) by reversing the order of its arrays and 
+    transposing the internal arrays appropriately.
+    Parameters:
+    mpo (qtn.tensor_1d.MatrixProductOperator): The input MPO to be mirrored.
+    Returns:
+    qtn.tensor_1d.MatrixProductOperator: The mirrored MPO with arrays in reversed order 
+    and internal arrays transposed.
+    """
+
     mpo.permute_arrays(shape='lrud')
     mirrored_arrays = [mpo.arrays[-1]]
     for arr in list(reversed(mpo.arrays))[1:-1]:
         mirrored_arrays.append(arr.transpose(1,0,2,3))
     mirrored_arrays.append(mpo.arrays[0])
     return qtn.tensor_1d.MatrixProductOperator(mirrored_arrays)
-
 
 def embed_to_identity(mpo,first_site,full_length):
     partial_length=len(mpo.arrays)

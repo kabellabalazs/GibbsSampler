@@ -1,27 +1,12 @@
 from weights import ch_weight, sh_weight
 #from superoperator_construct import get_left_action, get_right_action
-import quimb.tensor as qtn
 import numpy as np
-from utils import binary_sum
 from options import options
-from mpo_utils import mps_to_mpo
+from mpo_utils import mps_to_mpo, mirror_mpo
 from transformations import s_transform
 from mps_generators import kraus_mps, id_mps
-from move_to_gpu import move2gpu
-
-
-
-from weights import ch_weight, sh_weight
 import gc
-#from superoperator_construct import get_left_action, get_right_action
-import quimb.tensor as qtn
-import numpy as np
-from utils import binary_sum
-from options import options
-from mpo_utils import mps_to_mpo
-from transformations import s_transform
-from mps_generators import kraus_mps, id_mps
-from move_to_gpu import move2gpu
+import pickle
 
 
 
@@ -89,22 +74,24 @@ def disc_parts(jump_op,site_num,length,delta_t,num_steps,ham_plus,ham_minus,opts
     return scd,sca
 
 
-"""
-def local_discriminant(scd,sca):
-    left_scd=get_left_action(scd*-1)
-    right_scd=get_right_action(scd*-1)
-    sca_sca=get_right_action(sca).apply(get_left_action(sca))
-    local_disc=(sca_sca.add_MPO(left_scd)).add_MPO(right_scd)
-    local_disc.compress()
-    return local_disc
-"""
+def load_disc_parts(folder):
+    
+    with open(folder+'sca_xs.pkl', 'rb') as file:
+        sca_xs = pickle.load(file)
+    with open(folder+'sca_zs.pkl', 'rb') as file:
+        sca_zs = pickle.load(file)
+    with open(folder+'scd_xs.pkl', 'rb') as file:
+        scd_xs = pickle.load(file)
+    with open(folder+'scd_zs.pkl', 'rb') as file:
+        scd_zs = pickle.load(file)
 
-"""
-def local_discriminant(scd,sca):
-    left_scd=get_left_action(scd*-1)
-    right_scd=get_right_action(scd*-1)
-    sca_sca=get_right_action(sca).apply(get_left_action(sca))
-    local_disc=(sca_sca.add_MPO(left_scd)).add_MPO(right_scd)
-    local_disc.compress()
-    return local_disc
-"""
+
+    #Mirror the data to get the full system
+    sca_xs_mirrored = [mirror_mpo(sca_x) for sca_x in reversed(sca_xs)]
+    sca_zs_mirrored = [mirror_mpo(sca_z) for sca_z in reversed(sca_zs)]
+    scd_xs_mirrored = [mirror_mpo(scd_x) for scd_x in reversed(scd_xs)]
+    scd_zs_mirrored = [mirror_mpo(scd_z) for scd_z in reversed(scd_zs)]
+
+    scas=sca_xs+sca_xs_mirrored+sca_zs+sca_zs_mirrored
+    scds=scd_xs+scd_xs_mirrored+scd_zs+scd_zs_mirrored
+    return scds,scas

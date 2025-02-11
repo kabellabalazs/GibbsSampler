@@ -38,26 +38,6 @@ def get_rho_conj(rho,upper_ind_id='b{}',lower_ind_id='a{}',tags='rho*'):
  
     return rho_conj
 
-def mirror_mpo(mpo):
-    """
-    Mirror a Matrix Product Operator (MPO) by reversing the order of its arrays and 
-    transposing the internal arrays appropriately.
-    Parameters:
-    mpo (qtn.tensor_1d.MatrixProductOperator): The input MPO to be mirrored.
-    Returns:
-    qtn.tensor_1d.MatrixProductOperator: The mirrored MPO with arrays in reversed order 
-    and internal arrays transposed.
-    """
-
-    mpo.permute_arrays(shape='lrud')
-    mirrored_arrays = [mpo.arrays[-1]]
-    for arr in list(reversed(mpo.arrays))[1:-1]:
-        mirrored_arrays.append(arr.transpose(1,0,2,3))
-    mirrored_arrays.append(mpo.arrays[0])
-    return qtn.tensor_1d.MatrixProductOperator(mirrored_arrays)
-
-
-
 def project_out(rho,rho_conj,rho0,i,lix,rix):
     """
     Locally projects out the reduced ground state density matrix 
@@ -108,3 +88,140 @@ def project_out(rho,rho_conj,rho0,i,lix,rix):
                 curnet['_LEFT'],
                 curnet['_RIGHT']]
     return qtn.tensor_core.TNLinearOperator(linop_tens,left_inds=lix,right_inds=rix,optimize='auto-hq')
+
+
+def gibbs_mpo(local_ham,tebd_tol,split_opts):
+    rho0=qtn.MPS_product_state([np.eye(2)]*L)
+    tebd=qtn.TEBD(rho0,local_ham,imag=True,progbar=False,split_opts=split_opts)
+    tebd.update_to(.5,tol=tebd_tol)
+    rho=mps_to_mpo(tebd.pt)
+    rho=rho*np.sqrt(1/(rho.apply(rho)).trace())
+    return rho
+
+def super_dmrg(rho0,left_mpos,right_mpos,rho_g,num_iters,tolarances,which_eval='LA'):
+
+    which_eval='LA'
+    
+    rho=rho0
+    rho_conj=get_rho_conj(rho) 
+
+    new_left_mpos=[]
+    new_right_mpos=[]
+    for i in range(len(left_mpos)):
+        left_mpo=qtn.MatrixProductOperator(left_mpos[i].arrays, upper_ind_id='b{}', lower_ind_id='c{}', tags='lmpo',shape='lrud')
+        right_mpo=qtn.MatrixProductOperator(right_mpos[i].arrays, upper_ind_id='d{}', lower_ind_id='a{}', tags='rmpo',shape='lrud')
+        new_left_mpos.append(left_mpo)
+        new_right_mpos.append(right_mpo)
+    right_mpos=new_right_mpos
+    left_mpos=new_left_mpos
+
+    menvs=[]
+    for k in range(len(left_mpos)):
+        full_network=qtn.TensorNetwork1D((rho,rho_conj,left_mpos[k],right_mpos[k]))
+        full_network._L=rho.L
+        full_network._site_tag_id='I{}'
+        menvs.append(qtn.tensor_dmrg.MovingEnvironment(full_network,begin='right',bsz=2))
+
+    if isinstance(tolarances,float):
+        tolarances=[tolarances]*num_iters
+    n=0
+    while n<num_iters:
+        tol=tolarances[n]
+        split_opts = {'method': 'svd','cutoff_mode':'abs', 'max_bond': 100, 'cutoff': tol}
+        print('\nright_sweep: ',n)
+        
+        for i in range(rho.L-2):
+            progress_bar(i,rho.L-1)
+            v0 = (rho[f'I{i}'] & rho[f'I{i+1}']) # get the double site to optimize
+            v0c=v0.contract()
+            # get the indicies of the linear operator
+            rix = v0c.inds
+            lix = (rho_conj[f'I{i}'] & rho_conj[f'I{i+1}']).outer_inds() 
+            v_shape=v0c.shape
+            #get all the linear operators from the left and tight mpos
+            linop=-1*project_out(rho,rho_conj,rho_g,i,lix,rix)
+            for _,menv in enumerate(menvs):
+                menv.move_to(i)
+                curnet = menv()
+                linop_tens=[curnet['lmpo',f'I{i}'],
+                            curnet['lmpo',f'I{i+1}'],
+                            curnet['rmpo',f'I{i}'],
+                            curnet['rmpo',f'I{i+1}'],
+                            curnet['_LEFT'],
+                            curnet['_RIGHT']]
+                linop+=qtn.tensor_core.TNLinearOperator(linop_tens,left_inds=lix,right_inds=rix,optimize='auto-hq')
+        
+            #find the eigenvector of the full linear operator
+            _,evecs=spla.eigsh(linop,k=1,which=which_eval,v0=v0c.data.reshape(-1),tol=tol)
+            #split the linear operator into two sites
+            res_vec=evecs.T[0]
+            combined_sites=qtn.Tensor(res_vec.reshape(v_shape),inds=rix)
+            
+            if i==rho.L-2:
+                split_inds=rix[:int(len(rix)/2+0.5)]
+            else:
+                split_inds=rix[:int(len(rix)/2)]
+            new_sites=combined_sites.split(left_inds=split_inds,
+                                        absorb='right',
+                                        rtags=['rho',f'I{i+1}'],
+                                        ltags=['rho',f'I{i}'],
+                                        bond_ind=v0.inner_inds()[0],
+                                        **split_opts)
+            new_rho1=new_sites.tensors[0]
+            new_rho2=new_sites.tensors[1]
+            #replace the sites in the density mpo rho
+            rho[f'I{i}']=new_rho1.transpose(*rho[f'I{i}'].inds)
+            rho[f'I{i+1}']=new_rho2.transpose(*rho[f'I{i+1}'].inds)
+            rho_conj=get_rho_conj(rho)
+            #update the menvs
+            menvs=[]
+            for k in range(len(left_mpos)):
+                full_network=qtn.TensorNetwork1D((rho,rho_conj,left_mpos[k],right_mpos[k]))
+                full_network._L=rho.L
+                full_network._site_tag_id='I{}'
+                menvs.append(qtn.tensor_dmrg.MovingEnvironment(full_network,begin='left',bsz=2))
+        print('\nleft_sweep: ',n) 
+        for i in reversed(list(range(1,rho.L-1))):
+            progress_bar(i,rho.L-1)
+            v0 = (rho[f'I{i}'] & rho[f'I{i+1}']) # get the double site to optimize
+            v0c=v0.contract()
+            # get the indicies of the linear operator
+            rix = v0c.inds
+            lix = (rho_conj[f'I{i}'] & rho_conj[f'I{i+1}']).outer_inds() 
+            v_shape=v0c.shape
+            linop=-1*project_out(rho,rho_conj,rho_g,i,lix,rix)
+            for _,menv in enumerate(menvs):
+                menv.move_to(i)
+                curnet = menv()
+                linop_tens=[curnet['lmpo',f'I{i}'],
+                            curnet['lmpo',f'I{i+1}'],
+                            curnet['rmpo',f'I{i}'],
+                            curnet['rmpo',f'I{i+1}'],
+                            curnet['_LEFT'],
+                            curnet['_RIGHT']]
+                linop+=qtn.tensor_core.TNLinearOperator(linop_tens,left_inds=lix,right_inds=rix,optimize='auto-hq')
+            
+            _,evecs=spla.eigsh(linop,k=1,which=which_eval,v0=v0c.data.reshape(-1),tol=tol)
+
+            res_vec=evecs.T[0]
+            combined_sites=qtn.Tensor(res_vec.reshape(v_shape),inds=rix)
+            if i==rho.L-2:
+                split_inds=rix[:int(len(rix)/2+0.5)]
+            else:
+                split_inds=rix[:int(len(rix)/2)]
+            new_sites=combined_sites.split(left_inds=split_inds,absorb='left',rtags=[f'I{i+1}','rho'],ltags=[f'I{i}','rho'],bond_ind=v0.inner_inds()[0],**split_opts)
+            new_rho1=new_sites.tensors[0]
+            new_rho2=new_sites.tensors[1]
+            rho[f'I{i}']=new_rho1.transpose(*rho[f'I{i}'].inds)
+            rho[f'I{i+1}']=new_rho2.transpose(*rho[f'I{i+1}'].inds)
+            rho_conj=get_rho_conj(rho)
+            menvs=[]
+            for k in range(len(left_mpos)):
+                full_network=qtn.TensorNetwork1D((rho,rho_conj,left_mpos[k],right_mpos[k]))
+                full_network._L=rho.L
+                full_network._site_tag_id='I{}'
+                menvs.append(qtn.tensor_dmrg.MovingEnvironment(full_network,begin='right',bsz=2))
+        eval=sum([menv().contract(all) for menv in menvs])
+        print('\n',eval)
+        n+=1
+    return eval,rho
