@@ -44,7 +44,7 @@ def disc_parts(jump_op,site_num,length,delta_t,num_steps,ham_plus,ham_minus,opts
     sa=s_transform(jump_mps,sh_weight,delta_t,num_steps,ham_plus,ham_minus,**opts)
     print(f'sa {site_num} done')
     left_gate=np.kron(jump_op,np.eye(2))
-    right_gate=np.kron(np.eye(2),jump_op)
+    right_gate=np.kron(np.eye(2),jump_op.T)
     saa=sa.gate(right_gate,site_num,contract=True)
     asa=sa.gate(left_gate,site_num,contract=True)
     del sa
@@ -72,6 +72,7 @@ def disc_parts(jump_op,site_num,length,delta_t,num_steps,ham_plus,ham_minus,opts
     scd.compress(**opts['comp_opts'])
 
     return scd,sca
+
 def generate_disc_parts(ham_tp,ham_tm,delta_t,num_steps,jump_ops,folder,options=options):
     length=ham_tp.L
     scas={key:[] for key in jump_ops}
