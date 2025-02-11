@@ -91,7 +91,7 @@ def project_out(rho,rho_conj,rho0,i,lix,rix):
 
 
 def gibbs_mpo(local_ham,tebd_tol,split_opts):
-    rho0=qtn.MPS_product_state([np.eye(2)]*L)
+    rho0=qtn.MPS_product_state([np.eye(2)]*local_ham.L)
     tebd=qtn.TEBD(rho0,local_ham,imag=True,progbar=False,split_opts=split_opts)
     tebd.update_to(.5,tol=tebd_tol)
     rho=mps_to_mpo(tebd.pt)

@@ -7,7 +7,7 @@ from transformations import s_transform
 from mps_generators import kraus_mps, id_mps
 import gc
 import pickle
-
+import os
 
 
 def disc_parts(jump_op,site_num,length,delta_t,num_steps,ham_plus,ham_minus,opts=options,gpu=False):
@@ -72,26 +72,45 @@ def disc_parts(jump_op,site_num,length,delta_t,num_steps,ham_plus,ham_minus,opts
     scd.compress(**opts['comp_opts'])
 
     return scd,sca
+def generate_disc_parts(ham_tp,ham_tm,delta_t,num_steps,jump_ops,folder,options=options):
+    length=ham_tp.L
+    scas={key:[] for key in jump_ops}
+    scds={key:[] for key in jump_ops}
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    for i in range(int(length/2)):
+        for item in jump_ops.items():
+            print(f'Site: {item[0]}_{i}')
+            #generate parts
+            scd_a,sca_a=disc_parts(item[1],i,length,delta_t,num_steps,ham_tp,ham_tm,opts=options,gpu=False)
+            scas[item[0]].append(sca_a)
+            scds[item[0]].append(scd_a)
+            #save
+            with open(folder+f'scas.pkl','wb') as f:
+                pickle.dump(scas,f)
+            with open(folder+f'scds.pkl','wb') as f:
+                pickle.dump(scds,f)
+    #Mirror the data to get the full system
 
+    for item in scas.items():
+        key=item[0]
+        lst=item[1]
+        scas[key]=lst+ [mirror_mpo(sca) for sca in reversed(lst)]
+    for item in scds.items():
+        key=item[0]
+        lst=item[1]
+        scds[key]=lst+ [mirror_mpo(scd) for scd in reversed(lst)]
+    with open(folder+f'scas.pkl','wb') as f:
+        pickle.dump(scas,f)
+    with open(folder+f'scds.pkl','wb') as f:
+        pickle.dump(scds,f)
+    return scds,scas
 
 def load_disc_parts(folder):
     
-    with open(folder+'sca_xs.pkl', 'rb') as file:
-        sca_xs = pickle.load(file)
-    with open(folder+'sca_zs.pkl', 'rb') as file:
-        sca_zs = pickle.load(file)
-    with open(folder+'scd_xs.pkl', 'rb') as file:
-        scd_xs = pickle.load(file)
-    with open(folder+'scd_zs.pkl', 'rb') as file:
-        scd_zs = pickle.load(file)
-
-
-    #Mirror the data to get the full system
-    sca_xs_mirrored = [mirror_mpo(sca_x) for sca_x in reversed(sca_xs)]
-    sca_zs_mirrored = [mirror_mpo(sca_z) for sca_z in reversed(sca_zs)]
-    scd_xs_mirrored = [mirror_mpo(scd_x) for scd_x in reversed(scd_xs)]
-    scd_zs_mirrored = [mirror_mpo(scd_z) for scd_z in reversed(scd_zs)]
-
-    scas=sca_xs+sca_xs_mirrored+sca_zs+sca_zs_mirrored
-    scds=scd_xs+scd_xs_mirrored+scd_zs+scd_zs_mirrored
+    with open(folder+'scas.pkl', 'rb') as file:
+        scas = pickle.load(file)
+    with open(folder+'scds.pkl', 'rb') as file:
+        scds = pickle.load(file)
+    
     return scds,scas
